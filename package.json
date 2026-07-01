@@ -1,0 +1,20 @@
+{
+  "name": "firstaid-registry",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "cd frontend && npm run build",
+    "deploy": "cd frontend && npm run build && cd .. && wrangler deploy",
+    "db:migrate": "wrangler d1 execute firstaid-registry --file=schema.sql",
+    "db:migrate:remote": "wrangler d1 execute firstaid-registry --remote --file=schema.sql"
+  },
+  "dependencies": {
+    "hono": "^4.12.27"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260701.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^3.114.17"
+  }
+}

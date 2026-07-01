@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Leaflet fix inside React */
+.leaflet-container { height: 100%; width: 100%; }
