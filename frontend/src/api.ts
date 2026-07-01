@@ -48,6 +48,6 @@ export const api = {
     responders: () => req<any[]>('GET', '/admin/responders'),
     verify: (id: string, is_verified: boolean) => req<any>('PUT', `/admin/responders/${id}/verify`, { is_verified }),
     setAdmin: (id: string, is_admin: boolean) => req<any>('PUT', `/admin/responders/${id}/admin`, { is_admin }),
-    bootstrap: (email: string, admin_key: string) => req<any>('POST', '/admin/bootstrap', { email, admin_key }),
+    bootstrap: (password: string) => req<any>('POST', '/admin/bootstrap', { password }),
   },
 };

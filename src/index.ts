@@ -266,12 +266,11 @@ app.put('/api/admin/responders/:id/admin', auth, adminOnly, async (c) => {
 });
 
 // Bootstrap: grant admin by email using the ADMIN_KEY secret
-app.post('/api/admin/bootstrap', async (c) => {
-  const { email, admin_key } = await c.req.json();
-  if (!admin_key || admin_key !== c.env.ADMIN_KEY) return c.json({ error: 'Wrong key' }, 403);
-  const result = await c.env.DB.prepare('UPDATE responders SET is_admin = 1 WHERE email = ?').bind(email.toLowerCase()).run();
-  if (!result.meta.changes) return c.json({ error: 'User not found' }, 404);
-  return c.json({ ok: true, message: `${email} is now admin` });
+app.post('/api/admin/bootstrap', auth, async (c) => {
+  const { password } = await c.req.json();
+  if (!password || password !== c.env.ADMIN_KEY) return c.json({ error: 'Wrong password' }, 403);
+  await c.env.DB.prepare('UPDATE responders SET is_admin = 1 WHERE id = ?').bind(c.get('userId')).run();
+  return c.json({ ok: true });
 });
 
 app.get('/api/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
