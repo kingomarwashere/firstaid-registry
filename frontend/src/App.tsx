@@ -69,7 +69,7 @@ export default function App() {
             <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/map" element={<RequireAuth><MapPage /></RequireAuth>} />
             <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
-            <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
+            <Route path="/admin" element={<RequireAuth><Admin /></RequireAuth>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

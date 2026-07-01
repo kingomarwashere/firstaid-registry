@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { api } from '../api';
+import { useAuth } from '../App';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -26,7 +27,59 @@ function MapPicker({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   return null;
 }
 
+function AdminGate({ onGranted }: { onGranted: () => void }) {
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { setUser } = useAuth();
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true); setErr('');
+    try {
+      await api.admin.bootstrap(pw);
+      const fresh = await api.me.get();
+      setUser(fresh);
+      onGranted();
+    } catch (e: any) {
+      setErr('Incorrect password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[70vh] flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 bg-slate-900 rounded-xl flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">Admin Access</h1>
+          <p className="text-slate-500 text-sm mt-2">Enter the admin password to continue.</p>
+        </div>
+        <form onSubmit={submit} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+          {err && <p className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded">{err}</p>}
+          <input
+            type="password" value={pw} onChange={e => setPw(e.target.value)}
+            placeholder="Password" required autoFocus
+            className="w-full border border-slate-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900 text-sm"
+          />
+          <button
+            type="submit" disabled={loading}
+            className="w-full bg-slate-900 text-white py-2.5 rounded-lg font-semibold text-sm hover:bg-slate-800 disabled:opacity-50"
+          >
+            {loading ? 'Verifying…' : 'Enter'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
+  const { user } = useAuth();
+  const [isAdmin, setIsAdmin] = useState(false);
   const [tab, setTab] = useState<'stats' | 'responders' | 'incidents' | 'create'>('stats');
   const [stats, setStats] = useState<any>(null);
   const [responders, setResponders] = useState<any[]>([]);
@@ -85,11 +138,18 @@ export default function Admin() {
   };
 
   const tabClass = (t: string) =>
-    `px-4 py-2 rounded-lg font-medium text-sm transition-colors ${tab === t ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'}`;
+    `px-4 py-2 rounded font-medium text-sm transition-colors ${tab === t ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'}`;
+
+  if (!user?.is_admin && !isAdmin) {
+    return <AdminGate onGranted={() => setIsAdmin(true)} />;
+  }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Admin Panel</h1>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-bold text-slate-900">Admin Panel</h1>
+        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-medium uppercase tracking-wider">Admin Access</span>
+      </div>
 
       <div className="flex gap-2 mb-6 flex-wrap">
         <button className={tabClass('stats')} onClick={() => setTab('stats')}>Stats</button>
@@ -102,15 +162,15 @@ export default function Admin() {
       {tab === 'stats' && stats && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {[
-            { label: 'Total Responders', value: stats.totalResponders, color: 'bg-blue-50 text-blue-800' },
-            { label: 'Active Now', value: stats.activeResponders, color: 'bg-green-50 text-green-800' },
-            { label: 'Active Incidents', value: stats.activeIncidents, color: 'bg-red-50 text-red-800' },
-            { label: 'Total Incidents', value: stats.totalIncidents, color: 'bg-gray-50 text-gray-800' },
-            { label: 'Total Responded', value: stats.totalResponded, color: 'bg-purple-50 text-purple-800' },
+            { label: 'Total Responders', value: stats.totalResponders, border: 'border-blue-200', text: 'text-blue-900', sub: 'text-blue-500' },
+            { label: 'Active Now', value: stats.activeResponders, border: 'border-emerald-200', text: 'text-emerald-900', sub: 'text-emerald-500' },
+            { label: 'Active Incidents', value: stats.activeIncidents, border: 'border-red-200', text: 'text-red-900', sub: 'text-red-500' },
+            { label: 'Total Incidents', value: stats.totalIncidents, border: 'border-slate-200', text: 'text-slate-900', sub: 'text-slate-500' },
+            { label: 'Total Responded', value: stats.totalResponded, border: 'border-purple-200', text: 'text-purple-900', sub: 'text-purple-500' },
           ].map(s => (
-            <div key={s.label} className={`rounded-xl p-5 ${s.color}`}>
-              <div className="text-3xl font-extrabold">{s.value}</div>
-              <div className="text-sm mt-1 opacity-70">{s.label}</div>
+            <div key={s.label} className={`bg-white rounded-xl border ${s.border} p-5`}>
+              <div className={`text-3xl font-extrabold ${s.text}`}>{s.value}</div>
+              <div className={`text-xs mt-1.5 font-medium ${s.sub}`}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -118,97 +178,108 @@ export default function Admin() {
 
       {/* RESPONDERS */}
       {tab === 'responders' && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {['Name', 'Role', 'Phone', 'Status', 'Verified', 'Admin', 'Actions'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-gray-600 font-medium">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {responders.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{r.name}</div>
-                    <div className="text-gray-400 text-xs">{r.email}</div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{ROLE_LABELS[r.role] ?? r.role}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.phone}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${r.is_available ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {r.is_available ? 'Available' : 'Offline'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium ${r.is_verified ? 'text-green-600' : 'text-orange-500'}`}>
-                      {r.is_verified ? '✓ Yes' : 'No'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium ${r.is_admin ? 'text-purple-600' : 'text-gray-400'}`}>
-                      {r.is_admin ? '✓ Admin' : '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        onClick={() => verifyResponder(r.id, !r.is_verified)}
-                        className={`text-xs px-2 py-1 rounded ${r.is_verified ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
-                      >
-                        {r.is_verified ? 'Unverify' : 'Verify'}
-                      </button>
-                      <button
-                        onClick={() => toggleAdmin(r.id, !r.is_admin)}
-                        className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-700 hover:bg-purple-200"
-                      >
-                        {r.is_admin ? 'Remove Admin' : 'Make Admin'}
-                      </button>
-                    </div>
-                  </td>
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-700">Registered Responders</span>
+            <span className="text-xs text-slate-500">{responders.length} total</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-100">
+                <tr>
+                  {['Name', 'Role', 'Phone', 'Status', 'Verified', 'Admin', 'Actions'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 text-slate-500 font-medium text-xs uppercase tracking-wider">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {responders.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-900">{r.name}</div>
+                      <div className="text-slate-400 text-xs">{r.email}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-xs">{ROLE_LABELS[r.role] ?? r.role}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{r.phone}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${r.is_available ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {r.is_available ? 'Available' : 'Offline'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium ${r.is_verified ? 'text-emerald-600' : 'text-orange-500'}`}>
+                        {r.is_verified ? 'Verified ✓' : 'Pending'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium ${r.is_admin ? 'text-purple-600' : 'text-slate-300'}`}>
+                        {r.is_admin ? 'Admin' : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => verifyResponder(r.id, !r.is_verified)}
+                          className={`text-xs px-2.5 py-1 rounded font-medium transition-colors ${r.is_verified ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}
+                        >
+                          {r.is_verified ? 'Unverify' : 'Verify'}
+                        </button>
+                        <button
+                          onClick={() => toggleAdmin(r.id, !r.is_admin)}
+                          className="text-xs px-2.5 py-1 rounded font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                        >
+                          {r.is_admin ? '− Admin' : '+ Admin'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {/* ALL INCIDENTS */}
       {tab === 'incidents' && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {['Type', 'Address', 'Status', 'Notified', 'Responding', 'Created', 'Actions'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-gray-600 font-medium">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {incidents.map(inc => (
-                <tr key={inc.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium capitalize">{inc.type?.replace('_', ' ')}</td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[200px] truncate">{inc.address || '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                      inc.status === 'active' ? 'bg-red-100 text-red-700' :
-                      inc.status === 'resolved' ? 'bg-green-100 text-green-700' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>{inc.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-center">{inc.total_notified}</td>
-                  <td className="px-4 py-3 text-center">{inc.responder_count}</td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">{new Date(inc.created_at + 'Z').toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    {inc.status === 'active' && (
-                      <button onClick={() => resolveInc(inc.id)} className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200">Resolve</button>
-                    )}
-                  </td>
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 bg-slate-50">
+            <span className="text-sm font-semibold text-slate-700">Incident Log</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-100">
+                <tr>
+                  {['Type', 'Address', 'Status', 'Notified', 'Responding', 'Created', 'Actions'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 text-slate-500 font-medium text-xs uppercase tracking-wider">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {incidents.map(inc => (
+                  <tr key={inc.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-slate-900 capitalize">{inc.type?.replace('_', ' ')}</td>
+                    <td className="px-4 py-3 text-slate-500 max-w-[180px] truncate text-xs">{inc.address || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${
+                        inc.status === 'active' ? 'bg-red-100 text-red-700' :
+                        inc.status === 'resolved' ? 'bg-emerald-100 text-emerald-700' :
+                        'bg-slate-100 text-slate-500'
+                      }`}>{inc.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-slate-600 text-sm font-medium">{inc.total_notified}</td>
+                    <td className="px-4 py-3 text-center text-slate-600 text-sm font-medium">{inc.responder_count}</td>
+                    <td className="px-4 py-3 text-slate-400 text-xs">{new Date(inc.created_at + 'Z').toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      {inc.status === 'active' && (
+                        <button onClick={() => resolveInc(inc.id)} className="text-xs px-2.5 py-1 rounded font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors">Resolve</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

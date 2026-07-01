@@ -17,9 +17,6 @@ export default function Profile() {
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [myIncidents, setMyIncidents] = useState<any[]>([]);
-  const [adminPw, setAdminPw] = useState('');
-  const [adminMsg, setAdminMsg] = useState('');
-  const [adminLoading, setAdminLoading] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -121,38 +118,6 @@ export default function Profile() {
           </div>
         </div>
       </form>
-
-      {/* Claim admin */}
-      {!user?.is_admin && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-1">Admin Access</h2>
-          <p className="text-sm text-gray-500 mb-4">Enter the admin password to gain admin privileges.</p>
-          <form onSubmit={async e => {
-            e.preventDefault();
-            setAdminLoading(true); setAdminMsg('');
-            try {
-              await api.admin.bootstrap(adminPw);
-              const fresh = await api.me.get();
-              setUser(fresh);
-              setAdminMsg('You are now an admin. Refresh to see the Admin tab.');
-            } catch (err: any) {
-              setAdminMsg(err.message);
-            } finally {
-              setAdminLoading(false);
-            }
-          }} className="flex gap-3 items-center">
-            <input
-              type="password" value={adminPw} onChange={e => setAdminPw(e.target.value)}
-              placeholder="Admin password" required
-              className="border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 w-48"
-            />
-            <button type="submit" disabled={adminLoading} className="bg-gray-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-50">
-              {adminLoading ? '...' : 'Claim'}
-            </button>
-            {adminMsg && <span className={`text-sm ${adminMsg.includes('now') ? 'text-green-600' : 'text-red-600'}`}>{adminMsg}</span>}
-          </form>
-        </div>
-      )}
 
       {/* Response history */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
