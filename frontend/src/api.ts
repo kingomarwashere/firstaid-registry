@@ -23,6 +23,9 @@ export const api = {
     register: (body: object) => req<{ token: string; user: any }>('POST', '/auth/register', body),
     login: (body: object) => req<{ token: string; user: any }>('POST', '/auth/login', body),
   },
+  responders: {
+    onDuty: () => req<any[]>('GET', '/responders/on-duty'),
+  },
   me: {
     get: () => req<any>('GET', '/responders/me'),
     update: (body: object) => req<any>('PUT', '/responders/me', body),

@@ -102,6 +102,13 @@ app.put('/api/responders/me/location', auth, async (c) => {
   return c.json({ ok: true });
 });
 
+app.get('/api/responders/on-duty', auth, async (c) => {
+  const rows = await c.env.DB.prepare(
+    'SELECT id, name, role, latitude, longitude FROM responders WHERE is_available = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL'
+  ).all<any>();
+  return c.json(rows.results);
+});
+
 app.get('/api/responders/me/incidents', auth, async (c) => {
   const rows = await c.env.DB.prepare(`
     SELECT i.*, r.status AS response_status, r.id AS response_id

@@ -89,7 +89,7 @@ export default function Admin() {
   const [pickedPos, setPickedPos] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const SINGAPORE: [number, number] = [1.3521, 103.8198];
+  const SYDNEY: [number, number] = [-33.8688, 151.2093];
 
   const load = useCallback(async () => {
     try {
@@ -329,7 +329,7 @@ export default function Admin() {
           </form>
 
           <div className="rounded-xl overflow-hidden border border-gray-200 h-96 lg:h-auto">
-            <MapContainer center={SINGAPORE} zoom={12} className="h-full w-full">
+            <MapContainer center={SYDNEY} zoom={12} className="h-full w-full">
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
