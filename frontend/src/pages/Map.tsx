@@ -25,10 +25,10 @@ const makeEmojiIcon = (emoji: string, size = 36) => L.divIcon({
   popupAnchor: [0, -size / 2],
 });
 
-const redIcon   = makeIcon('red');
-const greenIcon = makeIcon('green');
-const blueIcon  = makeIcon('blue');
-const ambulanceIcon = makeEmojiIcon('🚑', 34);
+const redIcon       = makeIcon('red');
+const greenIcon     = makeIcon('green');
+const blueIcon      = makeIcon('blue');
+const ambulanceIcon = makeEmojiIcon('🚑', 36);
 const sosIcon       = makeEmojiIcon('🆘', 30);
 
 const INCIDENT_LABELS: Record<string, string> = {
@@ -46,26 +46,75 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 const SYDNEY: [number, number] = [-33.8688, 151.2093];
-// Ambulance dispatched from Sydney Hospital
-const AMBULANCE_STATION: [number, number] = [-33.8683, 151.2134];
+const AMBULANCE_STATION: [number, number] = [-33.8683, 151.2134]; // Sydney Hospital
+
+// ── Routing ────────────────────────────────────────────────────────────────
+
+async function fetchRoadRoute(
+  from: [number, number],
+  to: [number, number],
+  profile: 'driving' | 'foot' = 'driving'
+): Promise<[number, number][]> {
+  try {
+    // OSRM public demo — coords are lng,lat
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    if (data.routes?.[0]?.geometry?.coordinates) {
+      // OSRM returns [lng, lat] — flip to [lat, lng] for Leaflet
+      return data.routes[0].geometry.coordinates.map(
+        ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
+      );
+    }
+  } catch {}
+  // Fallback: straight line with a few mid-points so animation still works
+  return [from, lerp(from, to, 0.33), lerp(from, to, 0.66), to];
+}
+
+// ── Geometry helpers ────────────────────────────────────────────────────────
 
 function lerp(a: [number, number], b: [number, number], t: number): [number, number] {
-  const clamped = Math.min(1, Math.max(0, t));
-  return [a[0] + (b[0] - a[0]) * clamped, a[1] + (b[1] - a[1]) * clamped];
+  const c = Math.min(1, Math.max(0, t));
+  return [a[0] + (b[0] - a[0]) * c, a[1] + (b[1] - a[1]) * c];
 }
 
-function dist(a: [number, number], b: [number, number]) {
+function segDist(a: [number, number], b: [number, number]) {
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
 }
+
+/** Return position at fraction t (0–1) along an arbitrary polyline. */
+function interpolateRoute(pts: [number, number][], t: number): [number, number] {
+  if (!pts.length) return SYDNEY;
+  if (pts.length === 1 || t <= 0) return pts[0];
+  if (t >= 1) return pts[pts.length - 1];
+
+  // Cumulative distances
+  const dists: number[] = [0];
+  for (let i = 1; i < pts.length; i++) dists.push(dists[i - 1] + segDist(pts[i - 1], pts[i]));
+  const total = dists[dists.length - 1];
+  const target = t * total;
+
+  for (let i = 1; i < pts.length; i++) {
+    if (dists[i] >= target) {
+      const segT = (target - dists[i - 1]) / (dists[i] - dists[i - 1]);
+      return lerp(pts[i - 1], pts[i], segT);
+    }
+  }
+  return pts[pts.length - 1];
+}
+
+// ── Sub-components ──────────────────────────────────────────────────────────
 
 function LocateMe({ onLocate }: { onLocate: (lat: number, lng: number) => void }) {
   const map = useMap();
   return (
     <button
-      onClick={() => navigator.geolocation.getCurrentPosition(pos => {
-        map.flyTo([pos.coords.latitude, pos.coords.longitude], 15);
-        onLocate(pos.coords.latitude, pos.coords.longitude);
-      })}
+      onClick={() =>
+        navigator.geolocation.getCurrentPosition(p => {
+          map.flyTo([p.coords.latitude, p.coords.longitude], 15);
+          onLocate(p.coords.latitude, p.coords.longitude);
+        })
+      }
       className="absolute top-4 right-4 z-[1000] bg-white shadow border border-gray-200 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"
     >
       📍 My Location
@@ -80,21 +129,23 @@ function PickLocation({ onPick, active }: { onPick: (lat: number, lng: number) =
 
 function FlyTo({ target }: { target: [number, number] | null }) {
   const map = useMap();
-  useEffect(() => {
-    if (target) map.flyTo(target, 14, { duration: 1.5 });
-  }, [target, map]);
+  useEffect(() => { if (target) map.flyTo(target, 14, { duration: 1.5 }); }, [target, map]);
   return null;
 }
+
+// ── Types ───────────────────────────────────────────────────────────────────
 
 interface SimResponder {
   id: string;
   name: string;
   role: string;
-  start: [number, number];
+  route: [number, number][];
   pos: [number, number];
   arrived: boolean;
   etaSeconds: number;
 }
+
+// ── Main component ──────────────────────────────────────────────────────────
 
 export default function MapPage() {
   const { user } = useAuth();
@@ -109,17 +160,21 @@ export default function MapPage() {
   const [aedForm, setAedForm] = useState({ name: '', address: '', latitude: 0, longitude: 0 });
   const [aedMsg, setAedMsg] = useState('');
 
-  // Demo simulation state
+  // Simulation
   const [simActive, setSimActive] = useState(false);
+  const [simLoading, setSimLoading] = useState(false);
   const [simTarget, setSimTarget] = useState<[number, number] | null>(null);
   const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
+  const [ambulanceRoute, setAmbulanceRoute] = useState<[number, number][]>([]);
   const [ambulancePos, setAmbulancePos] = useState<[number, number]>(AMBULANCE_STATION);
   const [ambulanceArrived, setAmbulanceArrived] = useState(false);
   const [simResponders, setSimResponders] = useState<SimResponder[]>([]);
   const [simLog, setSimLog] = useState<string[]>([]);
   const [simElapsed, setSimElapsed] = useState(0);
+
   const simRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
+  const ambulanceArrivedRef = useRef(false);
 
   const loadData = useCallback(() => {
     api.incidents.list().then(setIncidents).catch(() => {});
@@ -129,10 +184,126 @@ export default function MapPage() {
 
   useEffect(() => {
     loadData();
-    navigator.geolocation.getCurrentPosition(pos => setMyPos([pos.coords.latitude, pos.coords.longitude]));
+    navigator.geolocation.getCurrentPosition(p => setMyPos([p.coords.latitude, p.coords.longitude]));
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  const stopSim = useCallback(() => {
+    if (simRef.current) { clearInterval(simRef.current); simRef.current = null; }
+  }, []);
+
+  const startSimulation = useCallback(async () => {
+    stopSim();
+    setSimLoading(true);
+
+    // Random incident near Sydney CBD
+    const incLat = -33.8688 + (Math.random() - 0.5) * 0.018;
+    const incLng = 151.2093 + (Math.random() - 0.5) * 0.025;
+    const target: [number, number] = [incLat, incLng];
+
+    // Create real incident
+    try {
+      await api.incidents.create({
+        reported_by: 'Emergency Caller',
+        type: 'cardiac_arrest',
+        latitude: incLat, longitude: incLng,
+        address: 'Sydney CBD (Demo)', description: 'Demo — simulated emergency call',
+      });
+    } catch {}
+
+    // Pick 3 nearest on-duty responders
+    const sorted = [...onDuty]
+      .filter(r => r.latitude && r.longitude)
+      .sort((a, b) =>
+        segDist([a.latitude, a.longitude], target) - segDist([b.latitude, b.longitude], target)
+      )
+      .slice(0, 3);
+
+    // Fetch all routes in parallel (ambulance + each responder)
+    setSimLog(['🆘 Emergency call received — cardiac arrest', '📡 Routing responders…']);
+
+    const [ambRoute, ...respRoutes] = await Promise.all([
+      fetchRoadRoute(AMBULANCE_STATION, target, 'driving'),
+      ...sorted.map(r => fetchRoadRoute([r.latitude, r.longitude], target, 'driving')),
+    ]);
+
+    const etaTimes = [12, 20, 30];
+    const responders: SimResponder[] = sorted.map((r, i) => ({
+      id: r.id,
+      name: r.name,
+      role: r.role,
+      route: respRoutes[i] ?? [([r.latitude, r.longitude] as [number, number]), target],
+      pos: [r.latitude, r.longitude],
+      arrived: false,
+      etaSeconds: etaTimes[i] ?? 35,
+    }));
+
+    const AMBULANCE_ETA = 45;
+    const TICK = 150; // ms
+
+    setAmbulanceRoute(ambRoute);
+    setAmbulancePos(AMBULANCE_STATION);
+    ambulanceArrivedRef.current = false;
+    setAmbulanceArrived(false);
+    setSimResponders(responders);
+    setSimTarget(target);
+    setFlyTarget(target);
+    setSimActive(true);
+    setSimLoading(false);
+    elapsedRef.current = 0;
+    setSimElapsed(0);
+    setSimLog([
+      '🆘 Emergency call received — cardiac arrest',
+      `📡 Alert sent to ${responders.length} nearby responders`,
+      '🚑 Ambulance dispatched from Sydney Hospital',
+    ]);
+
+    simRef.current = setInterval(() => {
+      elapsedRef.current += TICK / 1000;
+      const elapsed = elapsedRef.current;
+      setSimElapsed(Math.floor(elapsed));
+
+      // Ambulance along road route
+      const ambT = Math.min(1, elapsed / AMBULANCE_ETA);
+      setAmbulancePos(interpolateRoute(ambRoute, ambT));
+      if (ambT >= 1 && !ambulanceArrivedRef.current) {
+        ambulanceArrivedRef.current = true;
+        setAmbulanceArrived(true);
+        setSimLog(l => [...l, `🚑 Ambulance on scene — ${AMBULANCE_ETA}s`]);
+        stopSim();
+      }
+
+      // Responders along their road routes
+      setSimResponders(prev => prev.map((r, i) => {
+        if (r.arrived) return r;
+        const t = Math.min(1, elapsed / r.etaSeconds);
+        const pos = interpolateRoute(r.route, t);
+        const arrived = t >= 1;
+        if (arrived) {
+          setSimLog(l => [...l, `✅ ${r.name} (${ROLE_LABEL[r.role]}) on scene — ${r.etaSeconds}s`]);
+        }
+        return { ...r, pos, arrived };
+      }));
+    }, TICK);
+  }, [onDuty, stopSim, loadData]);
+
+  const resetSim = () => {
+    stopSim();
+    setSimActive(false);
+    setSimLoading(false);
+    setSimTarget(null);
+    setFlyTarget(null);
+    setAmbulanceRoute([]);
+    setAmbulancePos(AMBULANCE_STATION);
+    setAmbulanceArrived(false);
+    ambulanceArrivedRef.current = false;
+    setSimResponders([]);
+    setSimLog([]);
+    setSimElapsed(0);
+    elapsedRef.current = 0;
+    loadData();
+  };
 
   const respondToIncident = async (id: string, status: string) => {
     setResponding(id);
@@ -152,114 +323,9 @@ export default function MapPage() {
     } catch (err: any) { setAedMsg(err.message); }
   };
 
-  // --- DEMO SIMULATION ---
-
-  const stopSim = useCallback(() => {
-    if (simRef.current) clearInterval(simRef.current);
-    simRef.current = null;
-  }, []);
-
-  const startSimulation = useCallback(async () => {
-    stopSim();
-
-    // Random location near Sydney CBD
-    const incLat = -33.8688 + (Math.random() - 0.5) * 0.02;
-    const incLng = 151.2093 + (Math.random() - 0.5) * 0.03;
-    const target: [number, number] = [incLat, incLng];
-
-    // Create real incident via API
-    try {
-      await api.incidents.create({
-        reported_by: 'Emergency Caller',
-        type: 'cardiac_arrest',
-        latitude: incLat,
-        longitude: incLng,
-        address: 'Sydney CBD (Demo)',
-        description: 'Demo emergency — simulated call',
-      });
-      loadData();
-    } catch {}
-
-    // Pick 3 nearest on-duty responders
-    const sorted = [...onDuty]
-      .filter(r => r.latitude && r.longitude)
-      .sort((a, b) => dist([a.latitude, a.longitude], target) - dist([b.latitude, b.longitude], target))
-      .slice(0, 3);
-
-    const etaTimes = [12, 20, 28]; // seconds in simulation
-    const responders: SimResponder[] = sorted.map((r, i) => ({
-      id: r.id,
-      name: r.name,
-      role: r.role,
-      start: [r.latitude, r.longitude],
-      pos: [r.latitude, r.longitude],
-      arrived: false,
-      etaSeconds: etaTimes[i] ?? 35,
-    }));
-
-    setSimTarget(target);
-    setFlyTarget(target);
-    setAmbulancePos(AMBULANCE_STATION);
-    setAmbulanceArrived(false);
-    setSimResponders(responders);
-    setSimActive(true);
-    setSimLog(['🆘 Emergency call received — cardiac arrest reported']);
-    elapsedRef.current = 0;
-    setSimElapsed(0);
-
-    const AMBULANCE_ETA = 45; // seconds
-    const TICK = 200; // ms
-
-    setTimeout(() => setSimLog(l => [...l, `📡 Alert sent to ${responders.length} nearby responders`]), 800);
-    setTimeout(() => setSimLog(l => [...l, '🚑 Ambulance dispatched from Sydney Hospital']), 1500);
-
-    simRef.current = setInterval(() => {
-      elapsedRef.current += TICK / 1000;
-      const elapsed = elapsedRef.current;
-      setSimElapsed(Math.floor(elapsed));
-
-      // Ambulance movement
-      const ambT = elapsed / AMBULANCE_ETA;
-      const newAmbPos = lerp(AMBULANCE_STATION, target, ambT);
-      setAmbulancePos(newAmbPos);
-
-      if (ambT >= 1 && !ambulanceArrived) {
-        setAmbulanceArrived(true);
-        setSimLog(l => [...l, `🚑 Ambulance on scene — ${AMBULANCE_ETA}s elapsed`]);
-      }
-
-      // Responder movement
-      setSimResponders(prev => prev.map(r => {
-        if (r.arrived) return r;
-        const t = elapsed / r.etaSeconds;
-        const newPos = lerp(r.start, target, t);
-        const arrived = t >= 1;
-        if (arrived && !r.arrived) {
-          setSimLog(l => [...l, `✅ ${r.name} (${ROLE_LABEL[r.role]}) on scene — ${Math.floor(r.etaSeconds)}s elapsed`]);
-        }
-        return { ...r, pos: newPos, arrived };
-      }));
-
-      // Stop once ambulance arrives
-      if (ambT >= 1) stopSim();
-    }, TICK);
-  }, [onDuty, stopSim, loadData, ambulanceArrived]);
-
-  const resetSim = () => {
-    stopSim();
-    setSimActive(false);
-    setSimTarget(null);
-    setFlyTarget(null);
-    setAmbulancePos(AMBULANCE_STATION);
-    setAmbulanceArrived(false);
-    setSimResponders([]);
-    setSimLog([]);
-    setSimElapsed(0);
-    elapsedRef.current = 0;
-    loadData();
-  };
-
   useEffect(() => () => stopSim(), [stopSim]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="h-screen flex flex-col">
@@ -268,8 +334,7 @@ export default function MapPage() {
       <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center gap-3 flex-wrap z-10 shadow-sm">
         <span className="font-semibold text-slate-800 text-sm">Live Operational Map</span>
 
-        {/* SOS demo button */}
-        {!simActive ? (
+        {!simActive && !simLoading ? (
           <button
             onClick={startSimulation}
             disabled={onDuty.length === 0}
@@ -277,11 +342,15 @@ export default function MapPage() {
           >
             <span className="animate-pulse">🆘</span> Simulate Emergency Call
           </button>
+        ) : simLoading ? (
+          <span className="text-sm text-slate-500 font-medium animate-pulse">⏳ Routing via road network…</span>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-red-600 font-bold text-sm animate-pulse">● ACTIVE SIM</span>
-            <span className="text-slate-500 text-xs">{simElapsed}s elapsed</span>
-            <button onClick={resetSim} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium px-3 py-1.5 rounded-lg">Reset</button>
+            <span className="text-red-600 font-bold text-sm animate-pulse">● ACTIVE</span>
+            <span className="text-slate-500 text-xs tabular-nums">{simElapsed}s elapsed</span>
+            <button onClick={resetSim} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+              Reset
+            </button>
           </div>
         )}
 
@@ -304,7 +373,6 @@ export default function MapPage() {
           </button>
         </div>
 
-        {/* Legend */}
         <div className="hidden lg:flex items-center gap-4 ml-auto text-xs text-slate-500">
           <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block"></span>Incident</span>
           <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>AED</span>
@@ -326,7 +394,8 @@ export default function MapPage() {
         </div>
       )}
 
-      <div className="flex-1 flex relative">
+      <div className="flex-1 flex relative overflow-hidden">
+
         {/* Map */}
         <div className="flex-1 relative">
           <MapContainer center={SYDNEY} zoom={12} className="h-full w-full">
@@ -362,8 +431,7 @@ export default function MapPage() {
                     <div className="text-xs text-gray-400 mt-2 mb-2">{inc.responder_count ?? 0} responder(s) en route</div>
                     {!inc.my_response || inc.my_response === 'notified' ? (
                       <button
-                        onClick={() => respondToIncident(inc.id, 'accepted')}
-                        disabled={responding === inc.id}
+                        onClick={() => respondToIncident(inc.id, 'accepted')} disabled={responding === inc.id}
                         className="w-full bg-red-600 text-white py-1.5 rounded text-sm font-semibold hover:bg-red-700"
                       >
                         {responding === inc.id ? '…' : 'Respond Now'}
@@ -389,7 +457,7 @@ export default function MapPage() {
               </Marker>
             ))}
 
-            {/* On-duty responders (not in sim) */}
+            {/* Static on-duty responders (not currently in sim) */}
             {showResponders && onDuty
               .filter(r => !simActive || !simResponders.find(s => s.id === r.id))
               .map(r => (
@@ -410,39 +478,43 @@ export default function MapPage() {
               ))
             }
 
-            {/* === SIMULATION LAYER === */}
+            {/* ── SIMULATION LAYER ── */}
             {simActive && simTarget && (
               <>
-                {/* Incident marker */}
+                {/* Incident */}
                 <Marker position={simTarget} icon={sosIcon}>
-                  <Popup><strong className="text-red-700">🆘 Cardiac Arrest</strong><br /><span className="text-xs">Demo — Sydney CBD</span></Popup>
+                  <Popup><strong className="text-red-700">🆘 Cardiac Arrest</strong><br /><span className="text-xs">Demo emergency</span></Popup>
                 </Marker>
+                <Circle center={simTarget} radius={250} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.1, weight: 1.5, dashArray: '5' }} />
 
-                {/* Pulse ring around incident */}
-                <Circle center={simTarget} radius={300} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.08, weight: 2, dashArray: '6' }} />
+                {/* Full ambulance road route (ghost line) */}
+                {ambulanceRoute.length > 1 && (
+                  <Polyline
+                    positions={ambulanceRoute}
+                    pathOptions={{ color: '#ef4444', weight: 3, dashArray: '8 5', opacity: 0.35 }}
+                  />
+                )}
 
-                {/* Ambulance route line */}
-                <Polyline
-                  positions={[ambulancePos, simTarget]}
-                  pathOptions={{ color: '#ef4444', weight: 2, dashArray: '8 6', opacity: 0.7 }}
-                />
-
-                {/* Ambulance marker */}
+                {/* Ambulance marker — follows road */}
                 <Marker position={ambulancePos} icon={ambulanceIcon}>
                   <Popup>
-                    <div className="text-sm font-semibold">🚑 Ambulance</div>
+                    <div className="text-sm font-semibold">🚑 NSW Ambulance</div>
                     <div className="text-xs text-gray-500">Dispatched from Sydney Hospital</div>
-                    <div className="text-xs text-orange-600 font-medium mt-1">{ambulanceArrived ? '✓ On scene' : `ETA ~${Math.max(0, 45 - simElapsed)}s`}</div>
+                    <div className={`text-xs font-medium mt-1 ${ambulanceArrived ? 'text-emerald-600' : 'text-orange-600'}`}>
+                      {ambulanceArrived ? '✓ On scene' : `ETA ~${Math.max(0, 45 - simElapsed)}s`}
+                    </div>
                   </Popup>
                 </Marker>
 
-                {/* Responding CFRs */}
-                {simResponders.map((r, i) => (
-                  <g key={r.id}>
-                    <Polyline
-                      positions={[r.pos, simTarget]}
-                      pathOptions={{ color: ROLE_COLOR[r.role] ?? '#6b7280', weight: 2, dashArray: '5 5', opacity: 0.6 }}
-                    />
+                {/* Responding CFRs — each following their own road route */}
+                {simResponders.map(r => (
+                  <span key={r.id}>
+                    {r.route.length > 1 && (
+                      <Polyline
+                        positions={r.route}
+                        pathOptions={{ color: ROLE_COLOR[r.role] ?? '#6b7280', weight: 2.5, dashArray: '6 5', opacity: 0.3 }}
+                      />
+                    )}
                     <CircleMarker
                       center={r.pos}
                       radius={10}
@@ -450,7 +522,7 @@ export default function MapPage() {
                         color: r.arrived ? '#16a34a' : (ROLE_COLOR[r.role] ?? '#6b7280'),
                         fillColor: r.arrived ? '#16a34a' : (ROLE_COLOR[r.role] ?? '#6b7280'),
                         fillOpacity: 0.9,
-                        weight: 2,
+                        weight: 2.5,
                       }}
                     >
                       <Popup>
@@ -461,12 +533,11 @@ export default function MapPage() {
                         </div>
                       </Popup>
                     </CircleMarker>
-                  </g>
+                  </span>
                 ))}
               </>
             )}
 
-            {/* AED pin being placed */}
             {addingAed && aedForm.latitude !== 0 && (
               <Marker position={[aedForm.latitude, aedForm.longitude]} icon={greenIcon}>
                 <Popup>New AED (unsaved)</Popup>
@@ -475,7 +546,7 @@ export default function MapPage() {
           </MapContainer>
         </div>
 
-        {/* On-duty sidebar */}
+        {/* Sidebar */}
         <div className="hidden xl:flex flex-col w-56 bg-slate-900 text-white border-l border-slate-700 shrink-0">
           <div className="px-4 py-3 border-b border-slate-700">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">On Duty</p>
@@ -493,21 +564,20 @@ export default function MapPage() {
             ))}
           </div>
 
-          {/* Sim event log */}
           <div className="flex-1 overflow-y-auto px-3 py-2">
-            {simActive ? (
+            {simLog.length > 0 ? (
               <>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Event Log</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Dispatch Log</p>
                 <div className="space-y-2">
                   {simLog.map((entry, i) => (
-                    <div key={i} className="text-xs text-slate-300 border-l-2 border-red-500 pl-2 py-0.5">{entry}</div>
+                    <div key={i} className="text-xs text-slate-300 border-l-2 border-red-500 pl-2 py-0.5 leading-snug">{entry}</div>
                   ))}
                 </div>
               </>
             ) : (
-              <div className="text-center pt-6">
-                <p className="text-slate-500 text-xs">Press "Simulate Emergency Call" to see a live dispatch demo.</p>
-              </div>
+              <p className="text-slate-500 text-xs text-center pt-8 leading-relaxed">
+                Press "Simulate Emergency Call" to see a live road-routing dispatch demo.
+              </p>
             )}
           </div>
         </div>
